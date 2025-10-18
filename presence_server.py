@@ -2,16 +2,16 @@ import asyncio
 import json
 import time
 import os
-import websockets
 import firebase_admin
-from firebase_admin import credentials, db
-from firebase_admin import _apps
-from aiohttp import web
+import websockets
+from firebase_admin import credentials, db, _apps
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+import uvicorn
 
 # ---------- FIREBASE INIT ----------
 def init_firebase():
     try:
-        # إذا كان Firebase لم يُهيّأ من قبل
         if not _apps:
             print("🟢 Initializing Firebase...")
             firebase_config = {
@@ -24,9 +24,8 @@ def init_firebase():
                 "auth_uri": os.getenv("FB_AUTH_URI"),
                 "token_uri": os.getenv("FB_TOKEN_URI"),
                 "auth_provider_x509_cert_url": os.getenv("FB_AUTH_PROVIDER_CERT_URL"),
-                "client_x509_cert_url": os.getenv("FB_CLIENT_CERT_URL")
+                "client_x509_cert_url": os.getenv("FB_CLIENT_CERT_URL"),
             }
-
             cred = credentials.Certificate(firebase_config)
             firebase_admin.initialize_app(cred, {
                 "databaseURL": os.getenv("DATABASE_URL")
@@ -37,16 +36,36 @@ def init_firebase():
     except Exception as e:
         print(f"❌ Firebase init error: {e}")
         time.sleep(5)
-        init_firebase()  # إعادة المحاولة تلقائيًا
+        init_firebase()
 
 init_firebase()
 
-# ---------- CONNECTION STATE ----------
-connected_users = {}  # { websocket: { "userId": str, "lastPing": float } }
-PING_TIMEOUT = 15  # seconds
+# ---------- FASTAPI APP ----------
+app = FastAPI(title="Presence Server", version="1.0")
 
-# ---------- FIREBASE UTILS ----------
+@app.get("/")
+async def healthcheck():
+    """Basic health check endpoint for Render"""
+    return JSONResponse({"status": "✅ Presence server is running"})
+
+@app.get("/presence/{user_id}")
+async def get_presence(user_id: str):
+    """Get current status of a specific user"""
+    try:
+        ref = db.reference(f"presence/{user_id}")
+        data = ref.get()
+        if data:
+            return JSONResponse(data)
+        return JSONResponse({"error": "User not found"}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# ---------- PRESENCE SYSTEM ----------
+connected_users = {}  # { websocket: { "userId": str, "lastPing": float } }
+PING_TIMEOUT = 15
+
 def update_presence(user_id, status):
+    """Update user online/offline state in Firebase"""
     try:
         ref = db.reference(f"presence/{user_id}")
         data = {
@@ -57,10 +76,10 @@ def update_presence(user_id, status):
         print(f"🔥 {user_id} -> {status}")
     except Exception as e:
         print(f"⚠️ Failed to update presence for {user_id}: {e}")
-        init_firebase()  # لو حصلت مشكلة يعيد الاتصال
+        init_firebase()
 
-# ---------- WEBSOCKET HANDLER ----------
 async def handle_connection(websocket):
+    """Handle a single websocket connection"""
     try:
         msg = await websocket.recv()
         data = json.loads(msg)
@@ -95,8 +114,8 @@ async def handle_connection(websocket):
             update_presence(user_id, "offline")
             print(f"🔴 {user_id} disconnected.")
 
-# ---------- HEARTBEAT MONITOR ----------
 async def heartbeat_checker():
+    """Monitor and remove inactive users"""
     while True:
         now = time.time()
         to_remove = []
@@ -109,31 +128,25 @@ async def heartbeat_checker():
             del connected_users[ws]
         await asyncio.sleep(5)
 
-# ---------- HTTP HEALTH CHECK ----------
-async def healthcheck(request):
-    return web.Response(text="✅ Presence server is running", status=200)
-
-async def start_http_server():
-    app = web.Application()
-    app.router.add_get("/", healthcheck)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 10000)  # HTTP Health check port
-    await site.start()
-    print("🌍 HTTP Health Check running on port 10000")
-
-# ---------- MAIN ----------
-async def main():
+# ---------- SERVER START ----------
+async def start_websocket_server():
+    port = int(os.getenv("WS_PORT", 8080))
     asyncio.create_task(heartbeat_checker())
-    asyncio.create_task(start_http_server())  # Run HTTP health check
     while True:
         try:
-            server = await websockets.serve(handle_connection, "0.0.0.0", 8080)
-            print("🚀 Presence Server running at ws://0.0.0.0:8080")
+            server = await websockets.serve(handle_connection, "0.0.0.0", port)
+            print(f"🚀 WebSocket Server running at ws://0.0.0.0:{port}")
             await server.wait_closed()
         except Exception as e:
-            print(f"💥 Server error: {e}")
-            print("🔁 Restarting WebSocket server in 5 seconds...")
+            print(f"💥 WebSocket error: {e}")
             await asyncio.sleep(5)
 
-asyncio.run(main())
+# ---------- ENTRY POINT ----------
+if __name__ == "__main__":
+    # Run both FastAPI (HTTP) and WebSocket concurrently
+    loop = asyncio.get_event_loop()
+    loop.create_task(start_websocket_server())
+
+    port = int(os.getenv("PORT", 10000))  # Render port
+    print(f"🌍 HTTP API running on port {port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
