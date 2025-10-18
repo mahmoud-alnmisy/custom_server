@@ -4,13 +4,25 @@ import time
 import websockets
 import firebase_admin
 from firebase_admin import credentials, db
+import os
 
 # ---------- FIREBASE INIT ----------
-cred = credentials.Certificate("serviceAccountKey.json")
-firebase_admin.initialize_app(cred, {
-    "databaseURL": "https://fastfirebase-51964-default-rtdb.firebaseio.com"
-})
+firebase_config = {
+    "type": os.getenv("FB_TYPE"),
+    "project_id": os.getenv("FB_PROJECT_ID"),
+    "private_key_id": os.getenv("FB_PRIVATE_KEY_ID"),
+    "private_key": os.getenv("FB_PRIVATE_KEY").replace("\\n", "\n"),  # IMPORTANT
+    "client_email": os.getenv("FB_CLIENT_EMAIL"),
+    "client_id": os.getenv("FB_CLIENT_ID"),
+    "auth_uri": os.getenv("FB_AUTH_URI"),
+    "token_uri": os.getenv("FB_TOKEN_URI"),
+    "auth_provider_x509_cert_url": os.getenv("FB_AUTH_PROVIDER_CERT_URL"),
+    "client_x509_cert_url": os.getenv("FB_CLIENT_CERT_URL")
+}
 
+cred = credentials.Certificate(firebase_config, {
+    "databaseURL": os.getenv("DATABASE_URL")
+})
 # ---------- CONNECTION STATE ----------
 connected_users = {}  # { websocket: { "userId": str, "lastPing": float } }
 PING_TIMEOUT = 15  # seconds
