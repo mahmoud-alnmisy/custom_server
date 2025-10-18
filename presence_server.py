@@ -6,11 +6,12 @@ import websockets
 import firebase_admin
 from firebase_admin import credentials, db
 from firebase_admin import _apps
+from aiohttp import web
 
 # ---------- FIREBASE INIT ----------
 def init_firebase():
     try:
-        # إذا كان Firebase شغال بالفعل، ما نعيد تهيئته
+        # إذا كان Firebase لم يُهيّأ من قبل
         if not _apps:
             print("🟢 Initializing Firebase...")
             firebase_config = {
@@ -38,7 +39,6 @@ def init_firebase():
         time.sleep(5)
         init_firebase()  # إعادة المحاولة تلقائيًا
 
-
 init_firebase()
 
 # ---------- CONNECTION STATE ----------
@@ -59,7 +59,7 @@ def update_presence(user_id, status):
         print(f"⚠️ Failed to update presence for {user_id}: {e}")
         init_firebase()  # لو حصلت مشكلة يعيد الاتصال
 
-# ---------- MAIN HANDLER ----------
+# ---------- WEBSOCKET HANDLER ----------
 async def handle_connection(websocket):
     try:
         msg = await websocket.recv()
@@ -109,9 +109,23 @@ async def heartbeat_checker():
             del connected_users[ws]
         await asyncio.sleep(5)
 
+# ---------- HTTP HEALTH CHECK ----------
+async def healthcheck(request):
+    return web.Response(text="✅ Presence server is running", status=200)
+
+async def start_http_server():
+    app = web.Application()
+    app.router.add_get("/", healthcheck)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 10000)  # HTTP Health check port
+    await site.start()
+    print("🌍 HTTP Health Check running on port 10000")
+
 # ---------- MAIN ----------
 async def main():
     asyncio.create_task(heartbeat_checker())
+    asyncio.create_task(start_http_server())  # Run HTTP health check
     while True:
         try:
             server = await websockets.serve(handle_connection, "0.0.0.0", 8080)

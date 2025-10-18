@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: presence-server
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python presence_server.py
+    envVars:
+      - key: PORT
+        value: 10000
+    healthCheckPath: /
+    autoDeploy: true
