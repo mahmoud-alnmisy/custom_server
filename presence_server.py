@@ -33,9 +33,10 @@ cred = credentials.Certificate({
     "auth_provider_x509_cert_url": os.getenv("FB_AUTH_PROVIDER_CERT_URL"),
     "client_x509_cert_url": os.getenv("FB_CLIENT_CERT_URL"),
 })
-firebase_admin.initialize_app(cred, {
-    "databaseURL": os.getenv("DATABASE_URL")
-})
+if not firebase_admin._apps:
+    firebase_admin.initialize_app(cred, {
+        "databaseURL": os.getenv("DATABASE_URL")
+    })
 
 # ---------------- PRESENCE SYSTEM ----------------
 connected_users = {}
